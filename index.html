@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex">
+<!-- Aucune connexion possible : la page ne peut rien charger ni rien envoyer sur Internet. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<title>Rappels SMS</title>
+<style>
+  :root { --ink:#0A171D; --brass:#C2A269; --vert:#15803D; --vert-doux:#DDF6E5; --bord:#E3E8E6; --doux:#54707A; --fond:#F2F4F3; --ambre:#B45309; --ambre-doux:#FDF3D7; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--fond); color:#15303A; font:15px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  header { background:linear-gradient(160deg,#0A171D,#16323E); color:#fff; padding:16px 18px; position:sticky; top:0; }
+  h1 { margin:0; font-size:21px; font-weight:650; }
+  header p { margin:2px 0 0; font-size:13px; opacity:.82; }
+  .prog { height:6px; background:rgba(255,255,255,.18); border-radius:99px; margin-top:12px; overflow:hidden; }
+  .prog i { display:block; height:100%; width:0; background:var(--brass); }
+  main { padding:10px 12px 28px; }
+  .ligne { display:flex; align-items:center; gap:10px; background:#fff; border:1px solid var(--bord); border-radius:16px; padding:11px 12px; margin-bottom:8px; }
+  .h { font-weight:700; flex:none; min-width:46px; }
+  .qui { min-width:0; flex:1; overflow-wrap:anywhere; }
+  .qui b { display:block; font-weight:600; }
+  .qui span { font-size:12.5px; color:var(--doux); }
+  a.envoyer { flex:none; font-weight:700; font-size:14px; text-decoration:none; background:var(--vert); color:#fff; border-radius:12px; padding:12px 14px; }
+  .fait { opacity:.62; }
+  .fait a.envoyer { background:var(--vert-doux); color:var(--vert); }
+  .note { border-radius:12px; padding:12px 14px; margin-bottom:10px; font-size:14px; background:#fff; border:1px solid var(--bord); }
+  .note.ambre { background:var(--ambre-doux); color:var(--ambre); border-color:transparent; }
+  button { font:600 14px system-ui,sans-serif; width:100%; margin-top:10px; padding:12px; border-radius:12px; border:1px solid var(--bord); background:#fff; color:#15303A; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Rappels SMS</h1>
+  <p id="sous"></p>
+  <div class="prog" id="barre" hidden><i id="prog"></i></div>
+  <p id="compte" hidden></p>
+</header>
+<main id="m"></main>
+<script>
+"use strict";
+/* La liste du soir arrive dans la fin de l'adresse (après « # »), lue depuis le QR code : cette partie n'est jamais
+   envoyée à aucun serveur. La page l'efface aussitôt de l'adresse et de l'historique, et ne garde la liste que dans
+   l'onglet (sessionStorage), pour la retrouver au retour de l'application SMS. */
+var CLE = "rappels_sms", CLE_FAIT = "rappels_sms_fait", DUREE_MS = 18 * 3600 * 1000;
+var m = document.getElementById("m");
+function el(tag, cls, txt) { var e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; }
+function note(txt, cls) { m.textContent = ""; m.appendChild(el("div", "note " + (cls || ""), txt)); }
+function lire(k) { try { return JSON.parse(sessionStorage.getItem(k)); } catch (e) { return null; } }
+function ecrire(k, v) { try { sessionStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+function oublier() { try { sessionStorage.removeItem(CLE); sessionStorage.removeItem(CLE_FAIT); } catch (e) {} }
+async function decoder(b64) {
+  var s = atob(b64.replace(/-/g, "+").replace(/_/g, "/"));
+  var o = new Uint8Array(s.length);
+  for (var i = 0; i < s.length; i++) o[i] = s.charCodeAt(i);
+  var flux = new Blob([o]).stream().pipeThrough(new DecompressionStream("deflate"));
+  return JSON.parse(await new Response(flux).text());
+}
+function perimee(d) {
+  var a = new Date(), j = a.getFullYear() + "-" + String(a.getMonth() + 1).padStart(2, "0") + "-" + String(a.getDate()).padStart(2, "0");
+  return !d || !d.j || d.j < j || !d.recu || Date.now() - d.recu > DUREE_MS;
+}
+function dessiner(d) {
+  var fait = lire(CLE_FAIT) || {};
+  var n = d.l.filter(function (x, i) { return fait[i]; }).length;
+  document.getElementById("sous").textContent = d.t + (d.c ? " · " + d.c : "") + (d.p ? " · partie " + d.p : "");
+  document.getElementById("barre").hidden = false;
+  document.getElementById("prog").style.width = (d.l.length ? 100 * n / d.l.length : 0) + "%";
+  var c = document.getElementById("compte"); c.hidden = false; c.textContent = n + " ouvert" + (n > 1 ? "s" : "") + " sur " + d.l.length;
+  m.textContent = "";
+  d.l.forEach(function (x, i) {
+    var l = el("div", "ligne" + (fait[i] ? " fait" : ""));
+    l.appendChild(el("span", "h", x[0]));
+    var q = el("div", "qui"); q.appendChild(el("b", "", x[1])); q.appendChild(el("span", "", x[2].replace(/(\d\d)(?=\d)/g, "$1 "))); l.appendChild(q);
+    var a = el("a", "envoyer", fait[i] ? "Rouvrir" : "Envoyer");
+    a.href = "sms:" + x[2] + "?body=" + encodeURIComponent(x[3]);
+    a.addEventListener("click", function () { var f = lire(CLE_FAIT) || {}; f[i] = 1; ecrire(CLE_FAIT, f); setTimeout(function () { dessiner(d); }, 300); });
+    l.appendChild(a);
+    m.appendChild(l);
+  });
+  var b = el("button", "", "Effacer la liste de ce téléphone");
+  b.addEventListener("click", function () { oublier(); location.replace(location.pathname); });
+  m.appendChild(b);
+}
+(async function () {
+  var h = location.hash.slice(1);
+  if (h) {
+    history.replaceState(null, "", location.pathname);
+    if (typeof DecompressionStream === "undefined") { note("Ce navigateur est trop ancien pour ouvrir la liste. Utilisez le QR code par patient sur l'ordinateur.", "ambre"); return; }
+    try {
+      var d = await decoder(h);
+      if (d.v !== 1 || !Array.isArray(d.l)) throw new Error("format");
+      d.recu = Date.now();
+      oublier(); ecrire(CLE, d);
+    } catch (e) { note("QR code illisible. Scannez-le de nouveau, ou utilisez le QR code par patient sur l'ordinateur.", "ambre"); return; }
+  }
+  var liste = lire(CLE);
+  if (liste && perimee(liste)) { oublier(); liste = null; }
+  if (!liste) { document.getElementById("sous").textContent = "Aucune liste sur ce téléphone"; note("Scannez le QR code affiché par Suivi Patientèle avec l'appareil photo du téléphone."); return; }
+  dessiner(liste);
+})();
+</script>
+</body>
+</html>
