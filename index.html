@@ -44,7 +44,7 @@
 /* La liste du soir arrive dans la fin de l'adresse (après « # »), lue depuis le QR code : cette partie n'est jamais
    envoyée à aucun serveur. La page l'efface aussitôt de l'adresse et de l'historique, et ne garde la liste que dans
    l'onglet (sessionStorage), pour la retrouver au retour de l'application SMS. */
-var CLE = "rappels_sms", CLE_FAIT = "rappels_sms_fait", DUREE_MS = 18 * 3600 * 1000;
+var PAGE_VERSION = 3, CLE = "rappels_sms", CLE_FAIT = "rappels_sms_fait", DUREE_MS = 18 * 3600 * 1000;
 var m = document.getElementById("m");
 function el(tag, cls, txt) { var e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; }
 function note(txt, cls) { m.textContent = ""; m.appendChild(el("div", "note " + (cls || ""), txt)); }
@@ -69,7 +69,7 @@ function octetsBase64(b64) {
 // Format 2 : 1re ligne { v, t, c, j, p, m: [modèles] }, puis « heure|nom|tel|n° de modèle ». Format 1 (ancien) : JSON en base 64.
 async function decoder(h) {
   var ancien = h.slice(0, 2) === "eJ";
-  var flux = new Blob([ancien ? octetsBase64(h) : octetsBase32(h)]).stream().pipeThrough(new DecompressionStream("deflate"));
+  var flux = new Blob([ancien ? octetsBase64(h) : octetsBase32(h.toUpperCase().replace(/[^A-Z2-7]/g, ""))]).stream().pipeThrough(new DecompressionStream("deflate"));
   var txt = await new Response(flux).text();
   if (ancien) return JSON.parse(txt);
   var L = txt.split("\n"), d = JSON.parse(L[0]);
@@ -107,6 +107,7 @@ function dessiner(d) {
   b.addEventListener("click", function () { oublier(); location.replace(location.pathname); });
   m.appendChild(b);
 }
+window.addEventListener("hashchange", function () { if (location.hash.length > 1) location.reload(); });
 (async function () {
   var h = location.hash.slice(1);
   if (h) {
@@ -117,7 +118,11 @@ function dessiner(d) {
       if ((d.v !== 1 && d.v !== 2) || !Array.isArray(d.l)) throw new Error("format");
       d.recu = Date.now();
       oublier(); ecrire(CLE, d);
-    } catch (e) { note("QR code illisible. Scannez-le de nouveau, ou utilisez le QR code par patient sur l'ordinateur.", "ambre"); return; }
+    } catch (e) {
+      // Détail sans aucune donnée patient : nature de l'erreur, nombre de signes reçus, version de la page.
+      note("QR code illisible. Scannez-le de nouveau, ou utilisez le QR code par patient sur l'ordinateur. (Détail : " + String(e && e.name || "erreur") + " · " + h.length + " signes · page " + PAGE_VERSION + ")", "ambre");
+      return;
+    }
   }
   var liste = lire(CLE);
   if (liste && perimee(liste)) { oublier(); liste = null; }
