@@ -51,12 +51,35 @@ function note(txt, cls) { m.textContent = ""; m.appendChild(el("div", "note " + 
 function lire(k) { try { return JSON.parse(sessionStorage.getItem(k)); } catch (e) { return null; } }
 function ecrire(k, v) { try { sessionStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
 function oublier() { try { sessionStorage.removeItem(CLE); sessionStorage.removeItem(CLE_FAIT); } catch (e) {} }
-async function decoder(b64) {
-  var s = atob(b64.replace(/-/g, "+").replace(/_/g, "/"));
-  var o = new Uint8Array(s.length);
+function octetsBase32(s) {
+  var A = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567", o = [], tampon = 0, nb = 0;
+  for (var i = 0; i < s.length; i++) {
+    var v = A.indexOf(s[i]);
+    if (v < 0) throw new Error("base32");
+    tampon = (tampon << 5) | v; nb += 5;
+    if (nb >= 8) { o.push((tampon >>> (nb - 8)) & 255); nb -= 8; tampon &= (1 << nb) - 1; }
+  }
+  return new Uint8Array(o);
+}
+function octetsBase64(b64) {
+  var s = atob(b64.replace(/-/g, "+").replace(/_/g, "/")), o = new Uint8Array(s.length);
   for (var i = 0; i < s.length; i++) o[i] = s.charCodeAt(i);
-  var flux = new Blob([o]).stream().pipeThrough(new DecompressionStream("deflate"));
-  return JSON.parse(await new Response(flux).text());
+  return o;
+}
+// Format 2 : 1re ligne { v, t, c, j, p, m: [modèles] }, puis « heure|nom|tel|n° de modèle ». Format 1 (ancien) : JSON en base 64.
+async function decoder(h) {
+  var ancien = h.slice(0, 2) === "eJ";
+  var flux = new Blob([ancien ? octetsBase64(h) : octetsBase32(h)]).stream().pipeThrough(new DecompressionStream("deflate"));
+  var txt = await new Response(flux).text();
+  if (ancien) return JSON.parse(txt);
+  var L = txt.split("\n"), d = JSON.parse(L[0]);
+  d.l = L.slice(1).map(function (x) {
+    var c = x.split("|");
+    var m = d.m[+c[3] || 0].replace("\u0001", function () { return c[1]; }).replace("\u0002", function () { return c[0]; });
+    return [c[0], c[1], c[2], m];
+  });
+  delete d.m;
+  return d;
 }
 function perimee(d) {
   var a = new Date(), j = a.getFullYear() + "-" + String(a.getMonth() + 1).padStart(2, "0") + "-" + String(a.getDate()).padStart(2, "0");
@@ -91,7 +114,7 @@ function dessiner(d) {
     if (typeof DecompressionStream === "undefined") { note("Ce navigateur est trop ancien pour ouvrir la liste. Utilisez le QR code par patient sur l'ordinateur.", "ambre"); return; }
     try {
       var d = await decoder(h);
-      if (d.v !== 1 || !Array.isArray(d.l)) throw new Error("format");
+      if ((d.v !== 1 && d.v !== 2) || !Array.isArray(d.l)) throw new Error("format");
       d.recu = Date.now();
       oublier(); ecrire(CLE, d);
     } catch (e) { note("QR code illisible. Scannez-le de nouveau, ou utilisez le QR code par patient sur l'ordinateur.", "ambre"); return; }
